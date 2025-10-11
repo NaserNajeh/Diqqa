@@ -22,6 +22,9 @@ export const Header: React.FC<HeaderProps> = ({ onApiKeyClick, hasApiKey }) => {
               <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
                 مدعوم بالذكاء الاصطناعي
               </p>
+              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
+                إحدى أدوات <strong className="font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-500 to-pink-500">العقل القوي</strong> للذكاء الاصطناعي
+              </p>
             </div>
           </div>
           <div className="flex items-center">
