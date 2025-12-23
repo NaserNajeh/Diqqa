@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
   <head>
@@ -7,19 +8,26 @@
     <title>دِقَّة - لاستخراج الحروف العربية وتشكيلاتها</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <style>
+    <link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
       body {
-        font-family: 'Inter', sans-serif;
+        font-family: 'Readex Pro', sans-serif;
         background-color: #f8fafc;
-        background-image: radial-gradient(circle at 10% 20%, rgb(226, 238, 255) 0%, rgb(240, 246, 255) 47.2%, rgb(255, 255, 255) 90%);
-        transition: background-color 0.3s ease;
+        background-image: 
+          radial-gradient(at 0% 0%, hsla(210,100%,98%,1) 0, transparent 50%), 
+          radial-gradient(at 50% 0%, hsla(220,100%,97%,1) 0, transparent 50%), 
+          radial-gradient(at 100% 0%, hsla(210,100%,98%,1) 0, transparent 50%);
+        min-height: 100vh;
       }
       html.dark body {
         background-color: #020617;
-        background-image: radial-gradient(circle at 10% 20%, rgb(15, 23, 42) 0%, rgb(11, 15, 28) 47.2%, rgb(2, 6, 23) 90%);
+        background-image: 
+          radial-gradient(at 0% 0%, hsla(222,47%,11%,1) 0, transparent 50%), 
+          radial-gradient(at 50% 0%, hsla(222,47%,15%,1) 0, transparent 50%), 
+          radial-gradient(at 100% 0%, hsla(222,47%,11%,1) 0, transparent 50%);
       }
       @keyframes progress-indeterminate {
         0% { transform: translateX(-100%) scaleX(0.5); }
@@ -30,46 +38,49 @@
         animation: progress-indeterminate 1.8s ease-in-out infinite;
       }
       .glass-card {
-        background: rgba(255, 255, 255, 0.6);
-        -webkit-backdrop-filter: blur(20px);
-        backdrop-filter: blur(20px);
-        border: 1px solid rgba(255, 255, 255, 0.3);
+        background: rgba(255, 255, 255, 0.9);
+        -webkit-backdrop-filter: blur(16px);
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(226, 232, 240, 0.8);
+        box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
       }
       html.dark .glass-card {
-        background: rgba(15, 23, 42, 0.6);
-        -webkit-backdrop-filter: blur(20px);
-        backdrop-filter: blur(20px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(15, 23, 42, 0.9);
+        -webkit-backdrop-filter: blur(16px);
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.4);
       }
-      /* Custom scrollbar for better aesthetics */
       textarea::-webkit-scrollbar {
-        width: 8px;
+        width: 10px;
       }
       textarea::-webkit-scrollbar-track {
-        background: rgba(0,0,0,0.1);
+        background: rgba(0,0,0,0.02);
         border-radius: 10px;
       }
       textarea::-webkit-scrollbar-thumb {
-        background: rgba(0,0,0,0.3);
+        background: rgba(0,0,0,0.1);
         border-radius: 10px;
+        border: 2px solid transparent;
+        background-clip: padding-box;
       }
       html.dark textarea::-webkit-scrollbar-thumb {
-        background: rgba(255,255,255,0.3);
+        background: rgba(255,255,255,0.05);
       }
     </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react": "https://aistudiocdn.com/react@^19.1.1",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.1.1/",
-    "react/": "https://aistudiocdn.com/react@^19.1.1/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.21.0"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://aistudiocdn.com/react@^19.1.1",
+        "react-dom/": "https://aistudiocdn.com/react-dom@^19.1.1/",
+        "react/": "https://aistudiocdn.com/react@^19.1.1/",
+        "@google/genai": "https://aistudiocdn.com/@google/genai@^1.21.0"
+      }
+    }
+    </script>
+  <link rel="stylesheet" href="/index.css">
 </head>
-  <body class="text-slate-800 dark:text-slate-200">
+  <body class="text-slate-800 dark:text-slate-200 transition-colors duration-300">
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>

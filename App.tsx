@@ -1,12 +1,13 @@
-import React, { useState, useCallback, useEffect } from 'react';
+
+import React, { useState, useCallback } from 'react';
 import { extractTextFromFiles } from './services/geminiService';
-import { fileToBase64 } from './utils/fileUtils';
+import { fileToBase64, splitPdfIntoPages } from './utils/fileUtils';
 import { Header } from './components/Header';
 import { ImageUploader } from './components/ImageUploader';
 import { ResultDisplay } from './components/ResultDisplay';
 import { Footer } from './components/Footer';
 import { DocumentFormatter } from './components/DocumentFormatter';
-import { OcrIcon, FileTextIcon, KeyIcon, XIcon } from './components/Icons';
+import { OcrIcon, FileTextIcon } from './components/Icons';
 
 interface PreviewState {
   url: string;
@@ -16,141 +17,78 @@ interface PreviewState {
   mimeType: string;
 }
 
-interface ApiKeyModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onSave: (key: string) => void;
-}
-
-const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ isOpen, onClose, onSave }) => {
-  const [keyInput, setKeyInput] = useState('');
-
-  if (!isOpen) return null;
-
-  const handleSave = () => {
-    if (keyInput.trim()) {
-      onSave(keyInput.trim());
-      onClose();
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-md p-6 sm:p-8" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
-            <KeyIcon className="w-6 h-6 text-blue-500" />
-            إعداد مفتاح Gemini API
-          </h2>
-          <button onClick={onClose} className="p-1 rounded-full text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700">
-            <XIcon className="w-5 h-5" />
-          </button>
-        </div>
-        <p className="text-slate-600 dark:text-slate-400 mb-4">
-          لتفعيل التطبيق، يرجى إدخال مفتاح Gemini API الخاص بك. سيتم حفظ المفتاح في متصفحك فقط.
-        </p>
-        <div className="mb-4">
-          <label htmlFor="apiKey" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-            مفتاح API الخاص بك
-          </label>
-          <input
-            id="apiKey"
-            type="password"
-            value={keyInput}
-            onChange={(e) => setKeyInput(e.target.value)}
-            className="w-full p-2.5 border border-slate-300 dark:border-slate-600 rounded-md bg-white/50 dark:bg-slate-700/50 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            placeholder="أدخل مفتاحك هنا"
-          />
-        </div>
-        <p className="text-xs text-slate-500 mb-6">
-          ليس لديك مفتاح؟{' '}
-          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline font-semibold">
-            احصل على مفتاح من Google AI Studio
-          </a>
-        </p>
-        <button
-          onClick={handleSave}
-          className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition-all duration-300 disabled:bg-slate-400"
-          disabled={!keyInput.trim()}
-        >
-          حفظ المفتاح
-        </button>
-      </div>
-    </div>
-  );
-};
-
-
 const App: React.FC = () => {
   const [previews, setPreviews] = useState<PreviewState[]>([]);
   const [extractedText, setExtractedText] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [progress, setProgress] = useState<{current: number, total: number}>({current: 0, total: 0});
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'extract' | 'format'>('extract');
-  const [apiKey, setApiKey] = useState<string | null>(null);
-  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
 
-  useEffect(() => {
-    const storedKey = localStorage.getItem('gemini-api-key');
-    if (storedKey) {
-      setApiKey(storedKey);
-    }
-  }, []);
-
-  const handleSaveKey = (key: string) => {
-    setApiKey(key);
-    localStorage.setItem('gemini-api-key', key);
-  };
-
-  const openApiKeyModal = () => setIsApiKeyModalOpen(true);
-
-  const MAX_FILES = 10;
+  const MAX_FILES = 200; // زيادة الحد لدعم الكتب المقسمة
 
   const handleFilesUpload = useCallback(async (files: FileList) => {
     if (!files || files.length === 0) return;
     
-    const acceptedFiles = Array.from(files);
-    if (previews.length + acceptedFiles.length > MAX_FILES) {
-      setError(`لا يمكن تحميل أكثر من ${MAX_FILES} ملفات في المرة الواحدة.`);
-      return;
-    }
+    setIsLoading(true); // إظهار حالة التحميل أثناء التقسيم
     setError(null);
 
-    const newPreviewsPromises = acceptedFiles.map(file => 
-      fileToBase64(file).then(result => ({
-        url: result.dataUrl,
-        type: file.type,
-        name: file.name,
-        base64: result.base64,
-        mimeType: result.mimeType,
-      }))
-    );
-    
     try {
-        const newPreviews = await Promise.all(newPreviewsPromises);
+        const acceptedFiles = Array.from(files);
+        const newPreviews: PreviewState[] = [];
+
+        for (const file of acceptedFiles) {
+            if (file.type === 'application/pdf') {
+                // تقسيم ملف PDF إلى صفحات منفصلة
+                const pdfPages = await splitPdfIntoPages(file);
+                newPreviews.push(...pdfPages.map(p => ({
+                    url: p.dataUrl,
+                    type: p.mimeType,
+                    name: (p as any).name || file.name,
+                    base64: p.base64,
+                    mimeType: p.mimeType
+                })));
+            } else {
+                const res = await fileToBase64(file);
+                newPreviews.push({
+                    url: res.dataUrl,
+                    type: file.type,
+                    name: file.name,
+                    base64: res.base64,
+                    mimeType: res.mimeType
+                });
+            }
+        }
+
+        if (previews.length + newPreviews.length > MAX_FILES) {
+            setError(`لا يمكن تحميل أكثر من ${MAX_FILES} صفحة في المرة الواحدة.`);
+            setIsLoading(false);
+            return;
+        }
+
         setPreviews(prev => [...prev, ...newPreviews]);
         setExtractedText('');
-        setError(null);
     } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'أحد الملفات غير صالح.';
         setError(errorMessage);
+    } finally {
+        setIsLoading(false);
     }
   }, [previews.length]);
 
   const handleExtractText = useCallback(async () => {
     if (previews.length === 0) return;
-    if (!apiKey) {
-      openApiKeyModal();
-      return;
-    }
 
     setIsLoading(true);
     setError(null);
     setExtractedText('');
+    setProgress({current: 0, total: previews.length});
 
     try {
       const filesToProcess = previews.map(p => ({ imageData: p.base64, mimeType: p.mimeType }));
-      const text = await extractTextFromFiles(apiKey, filesToProcess);
+      const text = await extractTextFromFiles(filesToProcess, (current, total) => {
+          setProgress({current, total});
+      });
       setExtractedText(text);
     } catch (err) {
       console.error(err);
@@ -159,7 +97,7 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [previews, apiKey]);
+  }, [previews]);
   
   const handleRemoveFile = useCallback((indexToRemove: number) => {
     setPreviews(prev => prev.filter((_, index) => index !== indexToRemove));
@@ -172,6 +110,7 @@ const App: React.FC = () => {
     setExtractedText('');
     setIsLoading(false);
     setError(null);
+    setProgress({current: 0, total: 0});
   }, []);
 
   const TabButton = ({ isActive, onClick, icon, label }: { isActive: boolean, onClick: () => void, icon: React.ReactNode, label: string }) => (
@@ -190,8 +129,7 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <ApiKeyModal isOpen={isApiKeyModalOpen} onClose={() => setIsApiKeyModalOpen(false)} onSave={handleSaveKey} />
-      <Header onApiKeyClick={openApiKeyModal} hasApiKey={!!apiKey} />
+      <Header />
       <main className="flex-grow container mx-auto p-4 sm:p-6 md:p-8">
         <div className="max-w-7xl mx-auto flex flex-col items-center">
             <div className="p-1.5 bg-slate-200/50 dark:bg-slate-800/50 rounded-full shadow-inner">
@@ -224,20 +162,19 @@ const App: React.FC = () => {
                   maxFiles={MAX_FILES}
                   error={error}
                   hasProcessed={!!extractedText || (!!error && !isLoading)}
+                  progress={progress}
                 />
                 <ResultDisplay 
                   text={extractedText} 
                   isLoading={isLoading} 
                   error={error} 
                   hasFiles={previews.length > 0}
-                  apiKey={apiKey}
-                  openApiKeyModal={openApiKeyModal}
                 />
               </div>
             )}
 
             {activeTab === 'format' && (
-              <DocumentFormatter apiKey={apiKey} openApiKeyModal={openApiKeyModal} />
+              <DocumentFormatter />
             )}
           </div>
         </div>
