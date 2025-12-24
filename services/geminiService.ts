@@ -6,51 +6,74 @@ interface FileInput {
   mimeType: string;
 }
 
-const getApiKey = () => {
-    const manualKey = localStorage.getItem('user_gemini_api_key');
-    if (manualKey && manualKey.trim() !== "") {
-        return manualKey.trim();
-    }
-    return (process.env.API_KEY || "").trim();
+// دالة لجلب قائمة المفاتيح من التخزين المحلي
+const getApiKeys = (): string[] => {
+    const rawKeys = localStorage.getItem('user_gemini_api_key') || "";
+    return rawKeys.split('\n').map(k => k.trim()).filter(k => k !== "");
 };
 
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+export class AllKeysExhaustedError extends Error {
+    constructor() {
+        super("EXHAUSTED_KEYS");
+        this.name = "AllKeysExhaustedError";
+    }
+}
+
 const handleApiError = (error: unknown): Error => {
-  console.error("Detailed API Error:", error);
   const errStr = String(error);
-  
+  if (errStr.includes("EXHAUSTED_KEYS")) return error as Error;
+
   let detailedMessage = "حدث خطأ أثناء الاتصال بالخادم.";
-  
   if (errStr.includes('API_KEY_INVALID')) {
-    detailedMessage = "مفتاح API غير صالح. يرجى التأكد من نسخه من Google AI Studio بشكل صحيح.";
+    detailedMessage = "أحد المفاتيح غير صالح. يرجى مراجعة القائمة.";
   } else if (errStr.includes('429') || errStr.includes('QUOTA_EXCEEDED')) {
-    detailedMessage = "تجاوزت حد الاستخدام (Free Tier). انتظر دقيقة واحدة أو استخدم مفتاحاً آخر.";
-  } else if (errStr.includes('403') || errStr.includes('PERMISSION_DENIED')) {
-    detailedMessage = "تم رفض الوصول. تأكد من تفعيل الموديل في حسابك.";
+    detailedMessage = "انتهى حد الاستخدام لجميع المفاتيح المتوفرة حالياً.";
   } else {
     detailedMessage = `خطأ تقني: ${errStr.substring(0, 150)}...`;
   }
-
   return new Error(detailedMessage);
 }
 
 const DEFAULT_MODEL = 'gemini-3-flash-preview';
 
 /**
- * دالة لاستخراج النص بنظام الدفعات لضمان معالجة عدد كبير من الصفحات
+ * دالة ذكية لإجراء الطلب مع تدوير المفاتيح تلقائياً
  */
+async function callApiWithRotation(params: any): Promise<any> {
+    const keys = getApiKeys();
+    const finalKeys = keys.length > 0 ? keys : [(process.env.API_KEY || "").trim()];
+    
+    if (finalKeys.length === 0 || !finalKeys[0]) {
+        throw new Error("يرجى إدخال مفتاح API واحد على الأقل.");
+    }
+
+    for (const key of finalKeys) {
+        try {
+            const ai = new GoogleGenAI({ apiKey: key });
+            const response = await ai.models.generateContent(params);
+            return response;
+        } catch (error: any) {
+            const errStr = String(error);
+            // إذا كان الخطأ متعلق بحد الاستخدام (429) أو مشكلة مؤقتة في الخادم (503)، ننتقل للمفتاح التالي
+            if (errStr.includes('429') || errStr.includes('QUOTA_EXCEEDED') || errStr.includes('503') || errStr.includes('500')) {
+                console.warn(`Key starting with ${key.substring(0, 5)}... reached limit or had error, rotating...`);
+                continue;
+            }
+            throw error; // الأخطاء الأخرى مثل مفتاح خاطئ تماماً يتم رميها فوراً
+        }
+    }
+    throw new AllKeysExhaustedError();
+}
+
 export async function extractTextFromFiles(
   files: FileInput[], 
   onProgress?: (processed: number, total: number) => void
 ): Promise<string> {
-  const key = getApiKey();
-  if (!key) throw new Error("يرجى إدخل مفتاح API.");
-
   if (files.length === 0) return "";
   
-  const ai = new GoogleGenAI({ apiKey: key });
   let fullExtractedText = "";
-  
-  // رفع حجم الدفعة إلى 6 صفحات لمزيد من السرعة، مع ضمان استقرار المخرجات
   const BATCH_SIZE = 6;
   const chunks = [];
   for (let i = 0; i < files.length; i += BATCH_SIZE) {
@@ -65,70 +88,71 @@ export async function extractTextFromFiles(
         inlineData: { mimeType: file.mimeType, data: file.imageData },
       }));
 
-      const textPart = {
-        text: `TASK: HIGH-PRECISION ARABIC OCR. 
-MANDATORY: EXTRACT ALL TEXT FROM THE PROVIDED ${currentChunk.length} IMAGES/PAGES.
-RULES:
-1. OUTPUT THE EXTRACTED TEXT ONLY.
-2. DO NOT ADD ANY COMMENTS, PAGE HEADERS, OR STATUS MESSAGES LIKE "PROCESSING PAGE X".
-3. PRESERVE FULL ARABIC DIACRITICS (TASHKEEL).
-4. DO NOT SUMMARIZE.`,
-      };
-
-      const response = await ai.models.generateContent({
+      const response = await callApiWithRotation({
           model: DEFAULT_MODEL,
-          contents: { parts: [textPart, ...fileParts] },
+          contents: { parts: [
+              { text: "TASK: HIGH-PRECISION ARABIC OCR. EXTRACT ALL TEXT WITH DIACRITICS. PRESERVE EVERY WORD." },
+              ...fileParts
+          ] },
           config: { thinkingConfig: { thinkingBudget: 0 } }
       });
 
-      const extractedBatch = response.text || "";
-      fullExtractedText += extractedBatch + "\n\n";
-      
+      fullExtractedText += (response.text || "") + "\n\n";
       processedFiles += currentChunk.length;
-      if (onProgress) {
-        onProgress(processedFiles, files.length);
-      }
-      
-      // تأخير بسيط لتجنب Rate Limit
-      if (chunks.length > 1 && i < chunks.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 800));
-      }
+      if (onProgress) onProgress(processedFiles, files.length);
+      await delay(800);
     }
-
     return fullExtractedText.trim();
   } catch (error) {
     throw handleApiError(error);
   }
 }
 
-export async function formatTextForWord(rawText: string, processFootnotes: boolean): Promise<string> {
-    const key = getApiKey();
-    if (!key) throw new Error("يرجى إدخال مفتاح API.");
-
-    try {
-        const ai = new GoogleGenAI({ apiKey: key });
-
-        let instructions = `
-TASK: RECONSTRUCT RAW TEXT INTO PROFESSIONAL ACADEMIC HTML FOR MS WORD.
-- ABSOLUTELY NO CONTENT REMOVAL.
-- USE <h1>, <h2>, <p> TAGS.
-`;
-        if (processFootnotes) {
-            instructions += `- MANDATORY: IDENTIFY FOOTNOTE MARKERS AND GROUP THEM AT THE END UNDER <h2>الحواشي</h2>.\n`;
+function splitTextIntoChunks(text: string, maxChars: number = 7000): string[] {
+    const chunks: string[] = [];
+    let currentPos = 0;
+    while (currentPos < text.length) {
+        let endPos = currentPos + maxChars;
+        if (endPos < text.length) {
+            const nextNewline = text.lastIndexOf('\n', endPos);
+            if (nextNewline > currentPos + (maxChars * 0.6)) {
+                endPos = nextNewline;
+            }
         }
+        chunks.push(text.substring(currentPos, endPos));
+        currentPos = endPos;
+    }
+    return chunks;
+}
 
-        const response = await ai.models.generateContent({
-            model: DEFAULT_MODEL,
-            contents: {
-                parts: [
-                    { text: instructions },
-                    { text: "SOURCE TEXT TO FORMAT:\n\n" + rawText }
-                ]
-            },
-            config: { thinkingConfig: { thinkingBudget: 0 } }
-        });
+export async function formatTextForWord(
+    rawText: string, 
+    processFootnotes: boolean,
+    onProgress?: (current: number, total: number) => void,
+    startIndex: number = 0
+): Promise<string> {
+    try {
+        const textChunks = splitTextIntoChunks(rawText);
+        let fullHtml = "";
 
-        return response.text || "";
+        for (let i = startIndex; i < textChunks.length; i++) {
+            if (onProgress) onProgress(i + 1, textChunks.length);
+            
+            const response = await callApiWithRotation({
+                model: DEFAULT_MODEL,
+                contents: {
+                    parts: [
+                        { text: `TASK: CONVERT TEXT CHUNK TO ACADEMIC HTML FOR MS WORD. CHUNK ${i+1}/${textChunks.length}. PRESERVE DIACRITICS AND FOOTNOTES.` },
+                        { text: textChunks[i] }
+                    ]
+                },
+                config: { thinkingConfig: { thinkingBudget: 0 } }
+            });
+
+            fullHtml += (response.text || "").replace(/`{3}(html)?/g, '').trim() + "\n";
+            await delay(1000);
+        }
+        return fullHtml;
     } catch (error) {
         throw handleApiError(error);
     }
@@ -138,24 +162,31 @@ export async function translateTextAndFormatForWord(
     originalText: string, 
     targetLanguage: string, 
     domain: string,
-    processFootnotes: boolean
+    processFootnotes: boolean,
+    onProgress?: (current: number, total: number) => void
 ): Promise<string> {
-    const key = getApiKey();
-    if (!key) throw new Error("يرجى إدخال مفتاح API.");
-
     try {
-        const ai = new GoogleGenAI({ apiKey: key });
-        const response = await ai.models.generateContent({
-            model: DEFAULT_MODEL,
-            contents: {
-                parts: [
-                    { text: `TRANSLATE THE ENTIRE TEXT TO ${targetLanguage} (${domain} context). OUTPUT FULL TEXT FORMATTED AS HTML.` },
-                    { text: originalText }
-                ]
-            },
-            config: { thinkingConfig: { thinkingBudget: 0 } }
-        });
-        return response.text || "";
+        const textChunks = splitTextIntoChunks(originalText, 4500); 
+        let fullHtml = "";
+
+        for (let i = 0; i < textChunks.length; i++) {
+            if (onProgress) onProgress(i + 1, textChunks.length);
+
+            const response = await callApiWithRotation({
+                model: DEFAULT_MODEL,
+                contents: {
+                    parts: [
+                        { text: `TASK: TRANSLATE TO ${targetLanguage} (${domain}). OUTPUT HTML ONLY. DO NOT REMOVE CONTENT.` },
+                        { text: textChunks[i] }
+                    ]
+                },
+                config: { thinkingConfig: { thinkingBudget: 0 } }
+            });
+
+            fullHtml += (response.text || "").replace(/`{3}(html)?/g, '').trim() + "\n";
+            await delay(1200);
+        }
+        return fullHtml;
     } catch (error) {
         throw handleApiError(error);
     }

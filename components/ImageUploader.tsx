@@ -154,7 +154,10 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
                 {isLoading && (
                     <div className="absolute inset-0 bg-white/95 dark:bg-slate-950/95 flex flex-col items-center justify-center rounded-[2rem] z-20 backdrop-blur-md p-8 text-center border-2 border-blue-500/20 shadow-2xl">
                         <Spinner className="w-20 h-20 text-blue-600 mx-auto" />
-                        <p className="text-slate-900 dark:text-white mt-8 mb-6 font-black text-3xl">جاري استخراج كامل المحتوى...</p>
+                        <p className="text-slate-900 dark:text-white mt-8 mb-4 font-black text-3xl">جاري استخراج كامل المحتوى...</p>
+                        <p className="text-blue-700 dark:text-blue-400 mb-6 font-black text-xl animate-bounce">
+                          ( لحظات الانتظار .. املأها بالاستغفار )
+                        </p>
                         
                         {progress && progress.total > 0 && (
                             <div className="w-full max-w-md space-y-4">

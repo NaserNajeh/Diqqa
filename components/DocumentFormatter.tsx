@@ -1,7 +1,7 @@
 
-import React, { useState, useEffect, useRef, ChangeEvent } from 'react';
-import { SparkleIcon, WarningIcon, UploadIcon, ClipboardPasteIcon, DownloadIcon } from './Icons';
-import { formatTextForWord, translateTextAndFormatForWord } from '../services/geminiService';
+import React, { useState, useRef, ChangeEvent } from 'react';
+import { SparkleIcon, WarningIcon, UploadIcon, ClipboardPasteIcon } from './Icons';
+import { formatTextForWord } from '../services/geminiService';
 
 declare global {
     interface Window {
@@ -9,28 +9,14 @@ declare global {
     }
 }
 
-const cleanApiResponse = (htmlString: string) => {
-    return htmlString.replace(/`{3}(html)?/g, '').trim();
-};
-
 export const DocumentFormatter: React.FC = () => {
     const [text, setText] = useState<string>('');
     const [isFormatting, setIsFormatting] = useState(false);
     const [formattingError, setFormattingError] = useState<string | null>(null);
-    const [formattingProgress, setFormattingProgress] = useState(0);
-    const [showLongWaitMessage, setShowLongWaitMessage] = useState(false);
+    const [formattingStep, setFormattingStep] = useState({ current: 0, total: 0 });
     const [processFootnotes, setProcessFootnotes] = useState(true);
     
-    const progressIntervalRef = useRef<number | null>(null);
-    const longWaitTimerRef = useRef<number | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
-
-    useEffect(() => {
-        return () => {
-            if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-            if (longWaitTimerRef.current) clearTimeout(longWaitTimerRef.current);
-        };
-    }, []);
 
     const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -62,39 +48,37 @@ export const DocumentFormatter: React.FC = () => {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
     };
-
-    const startProgressSimulation = (setProgress: any, setShowWaitMessage: any, intervalRef: any, timerRef: any) => {
-        setProgress(0);
-        setShowWaitMessage(false);
-        if (intervalRef.current) clearInterval(intervalRef.current);
-        if (timerRef.current) clearTimeout(timerRef.current);
-        intervalRef.current = window.setInterval(() => setProgress((p: number) => Math.min(p + (p < 60 ? 8 : 2), 90)), 500);
-        timerRef.current = window.setTimeout(() => { setShowWaitMessage(true); setProgress(95); }, 20000);
-    };
-
-    const stopProgressSimulation = (setProgress: any, setShowWaitMessage: any, intervalRef: any, timerRef: any, isSuccess: boolean) => {
-        if (intervalRef.current) clearInterval(intervalRef.current);
-        if (timerRef.current) clearTimeout(timerRef.current);
-        if (isSuccess) setProgress(100);
-        setShowWaitMessage(false);
-    };
     
     const handleFormattedDownload = async () => {
         if (!text || isFormatting) return;
         setIsFormatting(true);
         setFormattingError(null);
-        startProgressSimulation(setFormattingProgress, setShowLongWaitMessage, progressIntervalRef, longWaitTimerRef);
+        setFormattingStep({ current: 0, total: 0 });
+
         try {
-            const rawFormattedHtml = await formatTextForWord(text, processFootnotes);
-            const formattedHtml = cleanApiResponse(rawFormattedHtml);
-            stopProgressSimulation(setFormattingProgress, setShowLongWaitMessage, progressIntervalRef, longWaitTimerRef, true);
+            const formattedHtml = await formatTextForWord(text, processFootnotes, (current, total) => {
+                setFormattingStep({ current, total });
+            });
+            
             const filename = `formatted-doc-${new Date().getTime()}.doc`;
-            const fullHtml = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><style>body { font-family: 'Calibri', sans-serif; font-size: 14pt; } p { text-align: justify; margin-bottom: 10pt; }</style></head><body lang="AR-SA" dir="rtl">${formattedHtml}</body></html>`;
+            const fullHtml = `
+                <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+                <head>
+                    <meta charset='utf-8'>
+                    <style>
+                        body { font-family: 'Calibri', 'Traditional Arabic', sans-serif; font-size: 14pt; } 
+                        p { text-align: justify; margin-bottom: 10pt; line-height: 1.6; }
+                        h1, h2 { color: #1e40af; }
+                    </style>
+                </head>
+                <body lang="AR-SA" dir="rtl">
+                    ${formattedHtml}
+                </body>
+                </html>`;
             triggerDownload(filename, new Blob([fullHtml], { type: 'application/msword' }));
-            setTimeout(() => setIsFormatting(false), 1500);
-        } catch (err) {
-            stopProgressSimulation(setFormattingProgress, setShowLongWaitMessage, progressIntervalRef, longWaitTimerRef, false);
-            setFormattingError(err instanceof Error ? err.message : 'حدث خطأ غير متوقع.');
+        } catch (err: any) {
+            setFormattingError(err.message === "EXHAUSTED_KEYS" ? "نفدت المفاتيح المتاحة. يرجى إضافة مفاتيح جديدة من الأعلى والإكمال." : err.message);
+        } finally {
             setIsFormatting(false);
         }
     };
@@ -104,24 +88,23 @@ export const DocumentFormatter: React.FC = () => {
             <div className="text-center">
                 <h2 className="text-4xl sm:text-5xl font-black text-slate-900 dark:text-white leading-tight">تنسيق المستندات والكتب</h2>
                 <p className="mt-5 text-slate-600 dark:text-slate-400 font-black max-w-3xl mx-auto text-xl">
-                    حوّل مسوداتك إلى مستندات أكاديمية منسقة بذكاء اصطناعي فائق الدقة.
+                    حوّل مسوداتك المكتوبة إلى مستندات أكاديمية منسقة بالكامل دون فقدان أي جزء.
                 </p>
             </div>
 
-            {/* تنبيه الجودة بلون غامق وواضح جداً */}
-            <div className="p-8 bg-amber-100 border-2 border-amber-400 rounded-[2.5rem] flex gap-6 items-center shadow-md ring-8 ring-amber-400/5">
-                <WarningIcon className="w-10 h-10 text-amber-900 shrink-0" />
-                <p className="text-xl text-amber-950 font-black leading-relaxed">
-                    <strong className="underline underline-offset-4 ml-2 decoration-amber-500">تنبيه الجودة:</strong>
-                    لضمان دقة الاستخراج والسيطرة الكاملة على التنسيق، يفضل عدم معالجة ملفات تزيد عن <span className="bg-red-700 text-white px-3 rounded-lg mx-1 shadow-sm font-black">100 صفحة</span> في المرة الواحدة.
+            {/* تم تغميق لون النص الوصفي هنا كما هو مطلوب */}
+            <div className="p-8 bg-blue-100 dark:bg-slate-900 border-2 border-blue-400 dark:border-blue-700 rounded-[2.5rem] flex gap-6 items-center shadow-md">
+                <SparkleIcon className="w-10 h-10 text-blue-800 dark:text-blue-300 shrink-0" />
+                <p className="text-xl text-slate-950 dark:text-slate-100 font-black leading-relaxed">
+                    نحن نستخدم تقنية <span className="text-blue-800 dark:text-blue-400 underline decoration-2 decoration-blue-500">المعالجة التتابعية</span> لضمان وصول التنسيق لكل صفحة في مستندك، مهما كان حجمه.
                 </p>
             </div>
             
-            <div className="relative group shadow-2xl rounded-[2.5rem] overflow-hidden border-2 border-slate-200 dark:border-slate-800 focus-within:border-blue-500 transition-all ring-1 ring-slate-200 dark:ring-slate-800 focus-within:ring-8 focus-within:ring-blue-500/5">
+            <div className="relative group shadow-2xl rounded-[2.5rem] overflow-hidden border-2 border-slate-200 dark:border-slate-800 focus-within:border-blue-500 transition-all ring-1 ring-slate-200 dark:ring-slate-800">
                 <textarea
                     value={text}
                     onChange={(e) => setText(e.target.value)}
-                    placeholder="الصق النص الطويل هنا للمُعالجة..."
+                    placeholder="الصق النص الطويل هنا..."
                     className="w-full h-[600px] p-10 bg-white/40 dark:bg-slate-950/40 backdrop-blur-md outline-none text-slate-900 dark:text-white font-black text-xl leading-loose"
                 />
                  <div className="absolute bottom-10 end-10 flex flex-wrap gap-4">
@@ -130,7 +113,14 @@ export const DocumentFormatter: React.FC = () => {
                         <span>رفع وورد</span>
                     </button>
                     <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".docx" />
-                    <button onClick={async () => setText(await navigator.clipboard.readText())} className="flex items-center gap-3 px-8 py-5 bg-blue-600 text-white rounded-[1.5rem] hover:bg-blue-700 font-black transition-all shadow-2xl">
+                    <button onClick={async () => {
+                        try {
+                            const clipText = await navigator.clipboard.readText();
+                            setText(clipText);
+                        } catch(e) {
+                            alert("يرجى منح إذن الوصول للحافظة أولاً.");
+                        }
+                    }} className="flex items-center gap-3 px-8 py-5 bg-blue-600 text-white rounded-[1.5rem] hover:bg-blue-700 font-black transition-all shadow-2xl">
                         <ClipboardPasteIcon className="w-6 h-6" />
                         <span>لصق من الحافظة</span>
                     </button>
@@ -144,34 +134,40 @@ export const DocumentFormatter: React.FC = () => {
                             type="checkbox" 
                             checked={processFootnotes} 
                             onChange={(e) => setProcessFootnotes(e.target.checked)}
-                            className="w-7 h-7 text-blue-600 rounded-xl focus:ring-blue-500 border-2 border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                            className="w-7 h-7 text-blue-600 rounded-xl border-2 border-slate-300 focus:ring-blue-500"
                         />
                         <span className="group-hover:text-blue-600 transition-colors">تفعيل معالجة وتجميع الحواشي أوتوماتيكياً</span>
                     </label>
                 </div>
 
                 {isFormatting ? (
-                  <div className="bg-slate-100 dark:bg-slate-900/80 p-10 rounded-[2.5rem] shadow-inner border border-slate-200 dark:border-slate-800">
-                      <div className="flex justify-between items-center mb-5 text-xl font-black text-slate-900 dark:text-white">
-                        <span>جاري الهندسة الأكاديمية للمستند...</span>
-                        <span>{formattingProgress}%</span>
+                  <div className="bg-slate-100 dark:bg-slate-900/80 p-10 rounded-[2.5rem] shadow-[inset_0_5px_20px_rgba(0,0,0,0.05)] border-2 border-slate-200 dark:border-slate-800 animate-fade-in">
+                      <div className="flex justify-between items-center mb-3 text-2xl font-black text-slate-900 dark:text-white">
+                        <span>جاري معالجة الجزء {formattingStep.current} من {formattingStep.total}...</span>
+                        <span>{Math.round((formattingStep.current / (formattingStep.total || 1)) * 100)}%</span>
                       </div>
-                      <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-6 overflow-hidden shadow-inner">
-                        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 h-full rounded-full transition-all duration-500 shadow-md" style={{ width: `${formattingProgress}%` }}></div>
+                      <p className="text-center font-black text-blue-600 mb-6 text-3xl animate-bounce">
+                        ( لحظات الانتظار .. املأها بالاستغفار )
+                      </p>
+                      <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-8 overflow-hidden shadow-inner border border-slate-300 dark:border-slate-700">
+                        <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 h-full rounded-full transition-all duration-500 shadow-md" style={{ width: `${(formattingStep.current / (formattingStep.total || 1)) * 100}%` }}></div>
                       </div>
-                      {showLongWaitMessage && <p className="mt-5 text-base text-amber-900 dark:text-amber-400 font-black text-center animate-pulse">المستند ضخم، جاري تكثيف المعالجة لضمان الأمانة في النقل...</p>}
+                      <p className="mt-6 text-lg text-slate-600 dark:text-slate-400 font-black text-center animate-pulse">يتم الآن تنسيق مستندك جزءاً بجزء لضمان الدقة الأكاديمية الكاملة.</p>
                   </div>
                 ) : (
-                  <button onClick={handleFormattedDownload} disabled={!text} className="w-full bg-gradient-to-r from-blue-600 via-indigo-700 to-purple-800 hover:scale-[1.01] text-white font-black text-2xl py-7 px-10 rounded-[2rem] shadow-2xl shadow-blue-500/20 transform transition-all disabled:opacity-40 disabled:transform-none">
-                      <SparkleIcon className="w-8 h-8 inline-block ml-4 mb-1" />
+                  <button onClick={handleFormattedDownload} disabled={!text || text.length < 10} className="w-full bg-gradient-to-r from-blue-600 via-indigo-700 to-purple-800 hover:scale-[1.01] text-white font-black text-3xl py-8 px-10 rounded-[2.5rem] shadow-2xl shadow-blue-500/20 transform transition-all disabled:opacity-40">
+                      <SparkleIcon className="w-10 h-10 inline-block ml-4 mb-1" />
                       تنسيق وتحميل المستند المكتمل
                   </button>
                 )}
 
                 {formattingError && (
-                    <div className="p-6 bg-red-100 border-2 border-red-300 rounded-3xl text-red-950 font-black flex items-center gap-5 shadow-sm">
-                        <WarningIcon className="w-7 h-7" />
-                        <span>{formattingError}</span>
+                    <div className="p-8 bg-red-100 border-2 border-red-300 rounded-[2rem] text-red-950 font-black flex items-center gap-6 shadow-lg animate-fade-in">
+                        <WarningIcon className="w-10 h-10 shrink-0" />
+                        <div className="text-xl">
+                            <p className="mb-1">حدث خطأ أثناء التنسيق:</p>
+                            <p className="text-base font-bold opacity-80">{formattingError}</p>
+                        </div>
                     </div>
                 )}
             </div>

@@ -38,8 +38,7 @@ export const ResultDisplay: React.FC<ResultDisplayProps> = ({ text, isLoading, e
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isFormatting, setIsFormatting] = useState(false);
   const [formattingError, setFormattingError] = useState<string | null>(null);
-  const [formattingProgress, setFormattingProgress] = useState(0);
-  const [showLongWaitMessage, setShowLongWaitMessage] = useState(false);
+  const [formattingStep, setFormattingStep] = useState({ current: 0, total: 0 });
   const [processFootnotes, setProcessFootnotes] = useState(true);
   
   const [isTranslationPanelOpen, setIsTranslationPanelOpen] = useState(false);
@@ -49,25 +48,10 @@ export const ResultDisplay: React.FC<ResultDisplayProps> = ({ text, isLoading, e
   const [isTranslating, setIsTranslating] = useState(false);
   const [translationError, setTranslationError] = useState<string | null>(null);
   const [translatedHtml, setTranslatedHtml] = useState<string>('');
-  const [translationProgress, setTranslationProgress] = useState(0);
-  const [showLongTranslationWaitMessage, setShowLongTranslationWaitMessage] = useState(false);
+  const [translationStep, setTranslationStep] = useState({ current: 0, total: 0 });
   const [processFootnotesForTranslation, setProcessFootnotesForTranslation] = useState(true);
 
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const progressIntervalRef = useRef<number | null>(null);
-  const longWaitTimerRef = useRef<number | null>(null);
-  const translationProgressIntervalRef = useRef<number | null>(null);
-  const longTranslationWaitTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-        if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-        if (longWaitTimerRef.current) clearTimeout(longWaitTimerRef.current);
-        if (translationProgressIntervalRef.current) clearInterval(translationProgressIntervalRef.current);
-        if (longTranslationWaitTimerRef.current) clearTimeout(longTranslationWaitTimerRef.current);
-    };
-  }, []);
-
 
   const handleCopy = () => {
     if (text) {
@@ -88,60 +72,17 @@ export const ResultDisplay: React.FC<ResultDisplayProps> = ({ text, isLoading, e
     URL.revokeObjectURL(url);
   };
 
-  const startProgressSimulation = (
-      setProgress: React.Dispatch<React.SetStateAction<number>>,
-      setShowWaitMessage: React.Dispatch<React.SetStateAction<boolean>>,
-      intervalRef: React.MutableRefObject<number | null>,
-      timerRef: React.MutableRefObject<number | null>
-  ) => {
-      setProgress(0);
-      setShowWaitMessage(false);
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      if (timerRef.current) clearTimeout(timerRef.current);
-      
-      intervalRef.current = window.setInterval(() => {
-          setProgress(prev => {
-              if (prev >= 90) {
-                  if (intervalRef.current) clearInterval(intervalRef.current);
-                  return 90;
-              }
-              const increment = prev < 60 ? 10 : 3;
-              return prev + increment;
-          });
-      }, 400);
-
-      timerRef.current = window.setTimeout(() => {
-          setShowWaitMessage(true);
-          setProgress(95);
-      }, 15000);
-  };
-
-  const stopProgressSimulation = (
-    setProgress: React.Dispatch<React.SetStateAction<number>>,
-    setShowWaitMessage: React.Dispatch<React.SetStateAction<boolean>>,
-    intervalRef: React.MutableRefObject<number | null>,
-    timerRef: React.MutableRefObject<number | null>,
-    isSuccess: boolean
-  ) => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      if (timerRef.current) clearTimeout(timerRef.current);
-      if (isSuccess) {
-        setProgress(100);
-        setShowWaitMessage(false);
-      }
-  };
-
   const handleFormattedDownload = async () => {
     if (!text || isFormatting) return;
     setIsFormatting(true);
     setFormattingError(null);
-    startProgressSimulation(setFormattingProgress, setShowLongWaitMessage, progressIntervalRef, longWaitTimerRef);
+    setFormattingStep({ current: 0, total: 0 });
 
     try {
-      const rawFormattedHtml = await formatTextForWord(text, processFootnotes);
-      const formattedHtml = cleanApiResponse(rawFormattedHtml);
-      stopProgressSimulation(setFormattingProgress, setShowLongWaitMessage, progressIntervalRef, longWaitTimerRef, true);
-        
+      const formattedHtml = await formatTextForWord(text, processFootnotes, (current, total) => {
+          setFormattingStep({ current, total });
+      });
+      
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const filename = `formatted-text-${timestamp}.doc`;
         const fullHtml = `
@@ -149,11 +90,9 @@ export const ResultDisplay: React.FC<ResultDisplayProps> = ({ text, isLoading, e
             <head>
                 <meta charset='utf-8'>
                 <style>
-                    body { font-family: 'Calibri', sans-serif; font-size: 14pt; }
-                    p { font-size: 14pt; margin: 0 0 10pt 0; text-align: justify; }
-                    h1 { font-size: 18pt; font-weight: bold; }
-                    h2 { font-size: 16pt; font-weight: bold; }
-                    sup { vertical-align: super; font-size: smaller; }
+                    body { font-family: 'Calibri', 'Traditional Arabic', sans-serif; font-size: 14pt; }
+                    p { margin: 0 0 10pt 0; text-align: justify; line-height: 1.6; }
+                    h1, h2 { color: #2563eb; }
                 </style>
             </head>
             <body lang="AR-SA" dir="rtl">
@@ -162,11 +101,10 @@ export const ResultDisplay: React.FC<ResultDisplayProps> = ({ text, isLoading, e
             </html>`;
         const blob = new Blob([fullHtml], { type: 'application/msword' });
         triggerDownload(filename, blob);
-        setTimeout(() => setIsFormatting(false), 1500);
     } catch (err) {
-        stopProgressSimulation(setFormattingProgress, setShowLongWaitMessage, progressIntervalRef, longWaitTimerRef, false);
         const message = err instanceof Error ? err.message : 'حدث خطأ غير متوقع أثناء التنسيق.';
         setFormattingError(message);
+    } finally {
         setIsFormatting(false);
     }
   };
@@ -176,25 +114,23 @@ export const ResultDisplay: React.FC<ResultDisplayProps> = ({ text, isLoading, e
     setIsTranslating(true);
     setTranslationError(null);
     setTranslatedHtml('');
-    startProgressSimulation(setTranslationProgress, setShowLongTranslationWaitMessage, translationProgressIntervalRef, longTranslationWaitTimerRef);
+    setTranslationStep({ current: 0, total: 0 });
 
     const finalDomain = translationDomain === 'غير ذلك' ? customDomain : translationDomain;
-    if (!finalDomain) {
-        setTranslationError('يرجى تحديد مجال الترجمة.');
-        setIsTranslating(false);
-        return;
-    }
 
     try {
-        const rawHtml = await translateTextAndFormatForWord(text, targetLanguage, finalDomain, processFootnotesForTranslation);
-        const cleanedHtml = cleanApiResponse(rawHtml);
+        const cleanedHtml = await translateTextAndFormatForWord(
+            text, 
+            targetLanguage, 
+            finalDomain, 
+            processFootnotesForTranslation,
+            (current, total) => setTranslationStep({ current, total })
+        );
         setTranslatedHtml(cleanedHtml);
-        stopProgressSimulation(setTranslationProgress, setShowLongTranslationWaitMessage, translationProgressIntervalRef, longTranslationWaitTimerRef, true);
-        setTimeout(() => setIsTranslating(false), 500);
     } catch (err) {
-        stopProgressSimulation(setTranslationProgress, setShowLongTranslationWaitMessage, translationProgressIntervalRef, longTranslationWaitTimerRef, false);
         const message = err instanceof Error ? err.message : 'حدث خطأ غير متوقع.';
         setTranslationError(message);
+    } finally {
         setIsTranslating(false);
     }
   };
@@ -210,10 +146,7 @@ export const ResultDisplay: React.FC<ResultDisplayProps> = ({ text, isLoading, e
               <meta charset='utf-8'>
               <style>
                   body { font-family: Calibri, 'Times New Roman', serif; font-size: 12pt; }
-                  p { font-size: 12pt; margin: 0 0 10pt 0; text-align: justify; }
-                  h1 { font-size: 16pt; font-weight: bold; }
-                  h2 { font-size: 14pt; font-weight: bold; }
-                  sup { vertical-align: super; font-size: smaller; }
+                  p { text-align: justify; margin-bottom: 10pt; line-height: 1.5; }
               </style>
           </head>
           <body lang="${targetLanguage}" dir="${isRtl ? 'rtl' : 'ltr'}">
@@ -242,17 +175,6 @@ export const ResultDisplay: React.FC<ResultDisplayProps> = ({ text, isLoading, e
     }
   };
 
-
-  useEffect(() => {
-    if (!text) {
-        setIsCopied(false);
-        setFormattingError(null);
-        setTranslatedHtml('');
-        setTranslationError(null);
-        setIsTranslationPanelOpen(false);
-    }
-  }, [text]);
-  
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -266,10 +188,15 @@ export const ResultDisplay: React.FC<ResultDisplayProps> = ({ text, isLoading, e
   const renderContent = () => {
     if (isLoading) {
       return (
-        <div className="space-y-3 animate-pulse w-full p-4">
-          <div className="h-4 bg-slate-300/50 dark:bg-slate-700/50 rounded w-3/4"></div>
-          <div className="h-4 bg-slate-300/50 dark:bg-slate-700/50 rounded w-full"></div>
-          <div className="h-4 bg-slate-300/50 dark:bg-slate-700/50 rounded w-5/6"></div>
+        <div className="flex flex-col items-center justify-center space-y-4 w-full p-4">
+          <p className="text-blue-600 dark:text-blue-400 font-black text-center animate-pulse">
+            ( لحظات الانتظار .. املأها بالاستغفار )
+          </p>
+          <div className="space-y-3 w-full">
+            <div className="h-4 bg-slate-300/50 dark:bg-slate-700/50 rounded w-3/4 mx-auto"></div>
+            <div className="h-4 bg-slate-300/50 dark:bg-slate-700/50 rounded w-full"></div>
+            <div className="h-4 bg-slate-300/50 dark:bg-slate-700/50 rounded w-5/6 mx-auto"></div>
+          </div>
         </div>
       );
     }
@@ -333,86 +260,91 @@ export const ResultDisplay: React.FC<ResultDisplayProps> = ({ text, isLoading, e
         <div className="mt-4 space-y-4">
             <div className="pt-4 border-t border-slate-300/50 dark:border-slate-700/50">
                 <div className="flex items-center justify-end mb-3">
-                    <label htmlFor="processFootnotes" className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 cursor-pointer">
+                    <label htmlFor="processFootnotes" className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 cursor-pointer font-bold">
                         <input 
                             type="checkbox" 
                             id="processFootnotes" 
                             checked={processFootnotes} 
                             onChange={(e) => setProcessFootnotes(e.target.checked)}
-                            className="w-4 h-4 text-blue-600 bg-slate-100 border-slate-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-slate-800 focus:ring-2 dark:bg-slate-700 dark:border-slate-600"
+                            className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
                         />
-                        <span>معالجة وتجميع الحواشي</span>
+                        <span>معالجة وتجميع الحواشي بدقة</span>
                     </label>
                 </div>
               {isFormatting ? (
-                <div className="text-center">
-                    <div className="flex justify-between items-center mb-1 text-sm font-medium text-slate-600 dark:text-slate-300"><span>جاري التنسيق الاحترافي...</span><span>{formattingProgress}%</span></div>
-                    <div className="w-full bg-slate-200 rounded-full h-2.5 dark:bg-slate-700"><div className="bg-gradient-to-r from-blue-500 to-cyan-400 h-2.5 rounded-full transition-all duration-300" style={{ width: `${formattingProgress}%` }}></div></div>
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-blue-100 dark:border-blue-900/30">
+                    <div className="flex justify-between items-center mb-1 text-sm font-black text-blue-600 dark:text-blue-400">
+                        <span>جاري معالجة الجزء {formattingStep.current} من {formattingStep.total}...</span>
+                        <span>{Math.round((formattingStep.current / formattingStep.total) * 100)}%</span>
+                    </div>
+                    <p className="text-[10px] text-center font-black text-blue-500 mb-2 animate-pulse">
+                      ( لحظات الانتظار .. املأها بالاستغفار )
+                    </p>
+                    <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 overflow-hidden">
+                        <div className="bg-gradient-to-r from-blue-600 to-indigo-500 h-full rounded-full transition-all duration-500" style={{ width: `${(formattingStep.current / formattingStep.total) * 100}%` }}></div>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500 text-center font-bold italic">نحن نقسم النص الطويل لضمان عدم ضياع أي صفحة أثناء التنسيق.</p>
                 </div>
               ) : (
-                <button onClick={handleFormattedDownload} disabled={isFormatting || isTranslating} className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 transform hover:-translate-y-0.5 transition-all duration-300 disabled:from-slate-400 disabled:to-slate-400 disabled:shadow-none disabled:transform-none disabled:cursor-not-allowed">
+                <button onClick={handleFormattedDownload} disabled={isFormatting || isTranslating} className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-black text-lg py-4 px-4 rounded-xl shadow-lg hover:scale-[1.01] transition-all">
                     <SparkleIcon className="w-5 h-5" />
-                    <span>تنزيل مستند Word منسق</span>
+                    <span>تنسيق كامل النص وتحميل Word</span>
                 </button>
               )}
             </div>
             {formattingError && <div className="flex items-center gap-2 text-sm text-red-500 font-semibold" role="alert"><WarningIcon className="w-5 h-5" /><span>خطأ في التنسيق: {formattingError}</span></div>}
 
             <div className="pt-4 border-t border-slate-300/50 dark:border-slate-700/50">
-                <button onClick={() => setIsTranslationPanelOpen(p => !p)} className="w-full flex justify-between items-center text-left font-semibold text-slate-700 dark:text-slate-200">
-                    <span className="flex items-center gap-3"><TranslateIcon className="w-5 h-5 text-green-500" />ترجمة احترافية وتنسيق</span>
+                <button onClick={() => setIsTranslationPanelOpen(p => !p)} className="w-full flex justify-between items-center text-left font-black text-slate-700 dark:text-slate-200">
+                    <span className="flex items-center gap-3"><TranslateIcon className="w-5 h-5 text-green-500" />ترجمة احترافية لكامل الكتاب</span>
                     <svg className={`w-5 h-5 transition-transform ${isTranslationPanelOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                 </button>
                 {isTranslationPanelOpen && (
                     <div className="mt-4 space-y-4 animate-fade-in">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                                <label htmlFor="target-language" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">الترجمة إلى</label>
-                                <select id="target-language" value={targetLanguage} onChange={e => setTargetLanguage(e.target.value)} className="w-full p-2 border border-slate-300 dark:border-slate-600 rounded-md bg-white/50 dark:bg-slate-700/50 focus:ring-blue-500 focus:border-blue-500">
+                                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">اللغة المستهدفة</label>
+                                <select value={targetLanguage} onChange={e => setTargetLanguage(e.target.value)} className="w-full p-2.5 border-2 border-slate-200 dark:border-slate-700 rounded-lg bg-white/50 dark:bg-slate-900/50 font-bold">
                                     {languages.map(lang => <option key={lang.code} value={lang.code}>{lang.name}</option>)}
                                 </select>
                             </div>
                             <div>
-                                <label htmlFor="translation-domain" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">مجال النص</label>
-                                <select id="translation-domain" value={translationDomain} onChange={e => setTranslationDomain(e.target.value)} className="w-full p-2 border border-slate-300 dark:border-slate-600 rounded-md bg-white/50 dark:bg-slate-700/50 focus:ring-blue-500 focus:border-blue-500">
+                                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">طبيعة النص</label>
+                                <select value={translationDomain} onChange={e => setTranslationDomain(e.target.value)} className="w-full p-2.5 border-2 border-slate-200 dark:border-slate-700 rounded-lg bg-white/50 dark:bg-slate-900/50 font-bold">
                                     {domains.map(dom => <option key={dom} value={dom}>{dom}</option>)}
                                 </select>
                             </div>
                         </div>
-                        <div className="flex items-center justify-end">
-                            <label htmlFor="processFootnotesTranslation" className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 cursor-pointer">
-                                <input 
-                                    type="checkbox" 
-                                    id="processFootnotesTranslation" 
-                                    checked={processFootnotesForTranslation} 
-                                    onChange={(e) => setProcessFootnotesForTranslation(e.target.checked)}
-                                    className="w-4 h-4 text-green-600 bg-slate-100 border-slate-300 rounded focus:ring-green-500 dark:focus:ring-green-600 dark:ring-offset-slate-800 focus:ring-2 dark:bg-slate-700 dark:border-slate-600"
-                                />
-                                <span>معالجة وتجميع الحواشي</span>
-                            </label>
-                        </div>
                         {!isTranslating && !translatedHtml && (
-                            <button onClick={handleTranslate} className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-green-600 to-emerald-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg shadow-green-500/30 hover:shadow-xl hover:shadow-green-500/40 transition-all duration-300">
+                            <button onClick={handleTranslate} className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white font-black py-4 px-4 rounded-xl shadow-lg hover:scale-[1.01] transition-all">
                                 <TranslateIcon className="w-5 h-5" />
-                                <span>ترجمة وتنسيق</span>
+                                <span>بدء ترجمة جميع الأجزاء وتنسيقها</span>
                             </button>
                         )}
                     </div>
                 )}
                 
                 {isTranslating && (
-                    <div className="text-center mt-4">
-                        <div className="flex justify-between items-center mb-1 text-sm font-medium text-slate-600 dark:text-slate-300"><span>جاري الترجمة والتنسيق...</span><span>{translationProgress}%</span></div>
-                        <div className="w-full bg-slate-200 rounded-full h-2.5 dark:bg-slate-700"><div className="bg-gradient-to-r from-green-500 to-emerald-400 h-2.5 rounded-full transition-all duration-300" style={{ width: `${translationProgress}%` }}></div></div>
+                    <div className="text-center mt-4 bg-emerald-50 dark:bg-emerald-900/20 p-4 rounded-xl border border-emerald-100 dark:border-emerald-900/30">
+                        <div className="flex justify-between items-center mb-1 text-sm font-black text-emerald-700 dark:text-emerald-400">
+                            <span>جاري ترجمة المقطع {translationStep.current} من {translationStep.total}...</span>
+                            <span>{Math.round((translationStep.current / translationStep.total) * 100)}%</span>
+                        </div>
+                        <p className="text-[10px] text-center font-black text-emerald-600 mb-2 animate-pulse">
+                          ( لحظات الانتظار .. املأها بالاستغفار )
+                        </p>
+                        <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 overflow-hidden">
+                            <div className="bg-gradient-to-r from-emerald-500 to-green-500 h-full rounded-full transition-all duration-500" style={{ width: `${(translationStep.current / translationStep.total) * 100}%` }}></div>
+                        </div>
                     </div>
                 )}
                 {translationError && <div className="mt-4 flex items-center gap-2 text-sm text-red-500 font-semibold" role="alert"><WarningIcon className="w-5 h-5" /><span>خطأ في الترجمة: {translationError}</span></div>}
                 {translatedHtml && !isTranslating && (
-                    <div className="mt-4 p-4 bg-green-500/10 dark:bg-green-900/30 rounded-lg text-center animate-fade-in">
-                        <h3 className="font-semibold text-green-800 dark:text-green-300">المستند المترجم جاهز للتنزيل!</h3>
-                        <button onClick={handleTranslatedDownload} className="mt-3 w-full max-w-sm mx-auto flex items-center justify-center gap-3 bg-green-600 text-white font-bold py-2.5 px-4 rounded-lg shadow-md hover:bg-green-700 transition-all">
-                            <DownloadIcon className="w-5 h-5" />
-                            <span>تنزيل مستند Word المترجم</span>
+                    <div className="mt-4 p-5 bg-green-500/10 dark:bg-green-900/30 rounded-xl text-center border-2 border-green-500/20">
+                        <h3 className="font-black text-green-800 dark:text-green-300 text-xl">اكتملت ترجمة وتنسيق كامل المستند!</h3>
+                        <button onClick={handleTranslatedDownload} className="mt-4 w-full flex items-center justify-center gap-3 bg-green-600 text-white font-black py-3 px-4 rounded-lg shadow-md hover:bg-green-700 transition-all">
+                            <DownloadIcon className="w-6 h-6" />
+                            <span>تنزيل الكتاب المترجم (Word)</span>
                         </button>
                     </div>
                 )}
